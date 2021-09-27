@@ -12,17 +12,17 @@ from catalyst.contrib.nn.criterion.focal import FocalLossMultiClass
 import pytorch_lightning as pl
 
 from datasets import Dataset, get_test_augmentations, get_train_augmentations
-from models.scan import SCAN
 from loss import TripletLoss
 from metrics import eval_from_scores
 from utils import GridMaker
 
 
 class LightningModel(pl.LightningModule):
-    def __init__(self, hparams):
+    def __init__(self, hparams, model):
         super().__init__()
-        self.hparams = hparams
-        self.model = SCAN()
+        self.save_hyperparameters(hparams)
+        # self.hparams = hparams
+        self.model = model
         self.triplet_loss = TripletLoss()
         self.log_cues = not self.hparams.cue_log_every == 0
         self.grid_maker = GridMaker()
@@ -32,9 +32,6 @@ class LightningModel(pl.LightningModule):
             self.clf_criterion = nn.CrossEntropyLoss()
 
     def forward(self, x):
-        return self.model(x)
-
-    def infer(self, x):
         outs, _ = self.model(x)
         return outs[-1]
 
@@ -62,24 +59,27 @@ class LightningModel(pl.LightningModule):
                 * self.hparams.loss_coef["trip_loss"]
             )
         total_loss = clf_loss + reg_loss + trip_loss
-
+        self.log("classification loss", clf_loss)
+        self.log("regression loss", reg_loss)
+        self.log("triplet loss", trip_loss)
         return total_loss
 
     def training_step(self, batch, batch_idx):
         input_ = batch[0]
         target = batch[1]
-        outs, clf_out = self(input_)
+        outs, clf_out = self.model(input_)
         loss = self.calc_losses(outs, clf_out, target)
 
         tensorboard_logs = {"train_loss": loss}
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return {"loss": loss, "log": tensorboard_logs}
 
-    def training_epoch_end(self, outputs):
-        avg_loss = torch.stack([x["loss"] for x in outputs]).mean()
-        tensorboard_logs = {
-            "train_avg_loss": avg_loss,
-        }
-        return {"train_avg_loss": avg_loss, "log": tensorboard_logs}
+    # def training_epoch_end(self, outputs):
+    #     avg_loss = torch.stack([x["loss"] for x in outputs]).mean()
+    #     tensorboard_logs = {
+    #         "train_avg_loss": avg_loss,
+    #     }
+    #     # return {"train_avg_loss": avg_loss, "log": tensorboard_logs}
 
     def validation_step(self, batch, batch_idx):
         input_ = batch[0]
@@ -91,6 +91,7 @@ class LightningModel(pl.LightningModule):
             "score": clf_out.cpu().numpy(),
             "target": target.cpu().numpy(),
         }
+        self.log("val_loss", loss)
         if self.log_cues:
             if (
                 self.current_epoch * batch_idx
@@ -104,7 +105,6 @@ class LightningModel(pl.LightningModule):
                 self.logger.experiment.add_image(
                     "images", images_grid, self.current_epoch * batch_idx
                 )
-
         return val_dict
 
     def validation_epoch_end(self, outputs):
@@ -123,6 +123,7 @@ class LightningModel(pl.LightningModule):
             "val_acc": acc,
             "val_thr": best_thr,
         }
+        self.log(tensorboard_logs)
         return {"val_loss": avg_loss, "log": tensorboard_logs}
 
     def configure_optimizers(self):
@@ -143,7 +144,7 @@ class LightningModel(pl.LightningModule):
             df, self.hparams.path_root, transforms, face_detector=face_detector
         )
         if self.hparams.use_balance_sampler:
-            labels = list(df.target.values)
+            labels = list(df.Label.values)
             sampler = BalanceClassSampler(labels, mode="upsampling")
             shuffle = False
         else:
@@ -172,6 +173,6 @@ class LightningModel(pl.LightningModule):
             dataset,
             batch_size=self.hparams.batch_size,
             num_workers=self.hparams.num_workers_val,
-            shuffle=False,
+            shuffle=True,  # needed to ensure a mix of real and attack in the batches
         )
         return dataloader
