@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 from pl_model import LightningModel
 from datasets import get_test_augmentations, Dataset
 from outputs import create_graphs_and_metrics
+from models.scan import SCAN
 
 
 def prepare_infer_dataloader(args: Namespace) -> DataLoader:

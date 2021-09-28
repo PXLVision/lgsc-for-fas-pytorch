@@ -10,7 +10,7 @@ from models.scan import SCAN
 
 def init_mlflow():
     os.environ["MLFLOW_S3_ENDPOINT_URL"] = 'http://s3.ewstorage.ch'
-    mlflow.set_tracking_uri('https://mlflow.pxl-vision.com:9055')
+    mlflow.set_tracking_uri('https://mlflow.pxl-vision.com:9056')
     experiment = mlflow.get_experiment_by_name('liveness-anomaly')
     if experiment is None:
         experiment_id = mlflow.create_experiment(
@@ -31,13 +31,14 @@ if __name__ == "__main__":
     configs = safitty.load(args.configs)
     configs = Namespace(**configs)
 
-    scan_model = SCAN()
-    model = LightningModel(hparams=configs, model=scan_model)
+    model = LightningModel(hparams=configs)
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(monitor="total_val_loss")
     trainer = pl.Trainer.from_argparse_args(
         configs,
         gpus=-1,
         accelerator="ddp",
         fast_dev_run=False,
+        callbacks=[checkpoint_callback],
         default_root_dir=configs.default_root_dir,
     )
     mlflow.autolog()

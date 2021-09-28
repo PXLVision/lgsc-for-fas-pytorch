@@ -37,7 +37,7 @@ def create_graphs_and_metrics(results_df: pd.DataFrame, output_folder: Path):
         report_file.write(f"HTER: {HTER} at threshold:  {HTER_threshold}\n")
 
         # BPCER at different APCERs
-        APCERS = [0.1, 0.05, 0.01, 0.005, 0.001]
+        APCERS = [0.1, 0.05, 0.01, 0.005, 0.001, 0]
         for apcer in APCERS:
             tmp_FPR = FPR - apcer
             apcer_arg = np.argmin(np.abs(tmp_FPR))

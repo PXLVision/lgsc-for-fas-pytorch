@@ -11,18 +11,21 @@ from catalyst.data.sampler import BalanceClassSampler
 from catalyst.contrib.nn.criterion.focal import FocalLossMultiClass
 import pytorch_lightning as pl
 
+import mlflow
+
 from datasets import Dataset, get_test_augmentations, get_train_augmentations
 from loss import TripletLoss
 from metrics import eval_from_scores
 from utils import GridMaker
+from models.scan import SCAN
 
 
 class LightningModel(pl.LightningModule):
-    def __init__(self, hparams, model):
+    def __init__(self, hparams):
         super().__init__()
         self.save_hyperparameters(hparams)
         # self.hparams = hparams
-        self.model = model
+        self.model = SCAN()
         self.triplet_loss = TripletLoss()
         self.log_cues = not self.hparams.cue_log_every == 0
         self.grid_maker = GridMaker()
@@ -59,9 +62,6 @@ class LightningModel(pl.LightningModule):
                 * self.hparams.loss_coef["trip_loss"]
             )
         total_loss = clf_loss + reg_loss + trip_loss
-        self.log("classification loss", clf_loss)
-        self.log("regression loss", reg_loss)
-        self.log("triplet loss", trip_loss)
         return total_loss
 
     def training_step(self, batch, batch_idx):
@@ -72,6 +72,7 @@ class LightningModel(pl.LightningModule):
 
         tensorboard_logs = {"train_loss": loss}
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        mlflow.log_metric("Total loss", float(loss.cpu().detach().numpy()))
         return {"loss": loss, "log": tensorboard_logs}
 
     # def training_epoch_end(self, outputs):
@@ -84,7 +85,7 @@ class LightningModel(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         input_ = batch[0]
         target = batch[1]
-        outs, clf_out = self(input_)
+        outs, clf_out = self.model(input_)
         loss = self.calc_losses(outs, clf_out, target)
         val_dict = {
             "val_loss": loss,
@@ -109,6 +110,7 @@ class LightningModel(pl.LightningModule):
 
     def validation_epoch_end(self, outputs):
         avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
+        total_loss = torch.stack([x["val_loss"] for x in outputs]).sum()
         targets = np.hstack([output["target"] for output in outputs])
         scores = np.vstack([output["score"] for output in outputs])[:, 1]
         metrics_, best_thr, acc = eval_from_scores(scores, targets)
@@ -123,7 +125,8 @@ class LightningModel(pl.LightningModule):
             "val_acc": acc,
             "val_thr": best_thr,
         }
-        self.log(tensorboard_logs)
+        self.log("total_val_loss", total_loss)
+        mlflow.log_metric("Validation loss", float(total_loss.cpu().numpy()))
         return {"val_loss": avg_loss, "log": tensorboard_logs}
 
     def configure_optimizers(self):
